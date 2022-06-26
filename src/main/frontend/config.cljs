@@ -4,8 +4,6 @@
             [frontend.state :as state]
             [frontend.util :as util]
             [shadow.resource :as rc]
-            [logseq.graph-parser.util :as gp-util]
-            [logseq.graph-parser.config :as gp-config]
             [frontend.mobile.util :as mobile-util]))
 
 (goog-define DEV-RELEASE false)
@@ -24,14 +22,13 @@
 ;; (goog-define LOGIN-URL
 ;;              "https://logseq.auth.us-east-1.amazoncognito.com/login?client_id=7ns5v1pu8nrbs04rvdg67u4a7c&response_type=code&scope=email+openid+phone&redirect_uri=logseq%3A%2F%2Fauth-callback")
 ;; (goog-define API-DOMAIN "api-prod.logseq.com")
-;; (goog-define WS-URL "wss://b2rp13onu2.execute-api.us-east-1.amazonaws.com/production?graphuuid=%s")
 
 ;; dev env
 (goog-define FILE-SYNC-PROD? false)
 (goog-define LOGIN-URL
-             "https://logseq-test2.auth.us-east-2.amazoncognito.com/login?client_id=3ji1a0059hspovjq5fhed3uil8&response_type=code&scope=email+openid+phone&redirect_uri=logseq%3A%2F%2Fauth-callback")
+             "https://logseq-test.auth.us-east-2.amazoncognito.com/login?client_id=4fi79en9aurclkb92e25hmu9ts&response_type=code&scope=email+openid+phone&redirect_uri=logseq%3A%2F%2Fauth-callback")
 (goog-define API-DOMAIN "api.logseq.com")
-(goog-define WS-URL "wss://og96xf1si7.execute-api.us-east-2.amazonaws.com/production?graphuuid=%s")
+
 
 ;; :TODO: How to do this?
 ;; (defonce desktop? ^boolean goog.DESKTOP)
@@ -40,7 +37,7 @@
 (def website
   (if dev?
     "http://localhost:3000"
-    "https://opcodecrypto.com"))
+    (util/format "https://%s.com" app-name)))
 
 (def api
   (if dev?
@@ -64,19 +61,59 @@
     (if dev? path
         (str asset-domain path))))
 
+(goog-define GITHUB_APP_NAME "logseq-test")
+
+(def github-app-name (if dev? GITHUB_APP_NAME "logseq"))
+
+(defn git-pull-secs
+  []
+  (or 60 (get-in @state/state [:config :git-pull-secs])))
+
+(defn git-push-secs
+  []
+  (or 10 (get-in @state/state [:config :git-push-secs])))
+
+(defn text-formats
+  []
+  (let [config-formats (some->> (get-in @state/state [:config :text-formats])
+                                (map :keyword)
+                                (set))]
+    (set/union
+     config-formats
+     #{:json :org :md :yml :dat :asciidoc :rst :txt :markdown :adoc :html :js :ts :edn :clj :ml :rb :ex :erl :java :php :c :css
+       :excalidraw})))
+
 (def markup-formats
   #{:org :md :markdown :asciidoc :adoc :rst})
 
-(defn doc-formats
+(defn img-formats
   []
-  #{:doc :docx :xls :xlsx :ppt :pptx :one :pdf :epub})
+  (let [config-formats (some->> (get-in @state/state [:config :image-formats])
+                                (map :keyword)
+                                (set))]
+    (set/union
+     config-formats
+     #{:gif :svg :jpeg :ico :png :jpg :bmp :webp})))
 
-(def audio-formats #{:mp3 :ogg :mpeg :wav :m4a :flac :wma :aac})
+(def audio-formats #{:mp3 :ogg :mpeg :wav})
 
-(def media-formats (set/union (gp-config/img-formats) audio-formats))
+(def media-formats (set/union (img-formats) audio-formats))
 
 (def html-render-formats
   #{:adoc :asciidoc})
+
+(defn supported-formats
+  []
+  (set/union (text-formats)
+             (img-formats)))
+
+;; TODO: rename
+(defonce mldoc-support-formats
+  #{:org :markdown :md})
+
+(defn mldoc-support?
+  [format]
+  (contains? mldoc-support-formats (keyword format)))
 
 (def mobile?
   (when-not util/node-test?
@@ -86,7 +123,13 @@
 
 (defn get-block-pattern
   [format]
-  (gp-config/get-block-pattern (or format (state/get-preferred-format))))
+  (let [format (or format (state/get-preferred-format))
+        format (keyword format)]
+    (case format
+      :org
+      "*"
+
+      "-")))
 
 (defn get-hr
   [format]
@@ -223,6 +266,7 @@
 
 (defonce default-journals-directory "journals")
 (defonce default-pages-directory "pages")
+(defonce default-draw-directory "draws")
 
 (defn get-pages-directory
   []
@@ -232,6 +276,10 @@
   []
   (or (state/get-journals-directory) default-journals-directory))
 
+(defn draw?
+  [path]
+  (util/starts-with? path default-draw-directory))
+
 (defonce local-repo "local")
 
 (defn demo-graph?
@@ -240,10 +288,10 @@
   ([graph]
    (= graph local-repo)))
 
+(defonce local-assets-dir "assets")
 (defonce recycle-dir ".recycle")
 (def config-file "config.edn")
 (def custom-css-file "custom.css")
-(def export-css-file "export.css")
 (def custom-js-file "custom.js")
 (def metadata-file "metadata.edn")
 (def pages-metadata-file "pages-metadata.edn")
@@ -264,6 +312,10 @@
   (and (string? s)
        (string/starts-with? s local-db-prefix)))
 
+(defn local-asset?
+  [s]
+  (util/safe-re-find (re-pattern (str "^[./]*" local-assets-dir)) s))
+
 (defn get-local-asset-absolute-path
   [s]
   (str "/" (string/replace s #"^[./]*" "")))
@@ -282,7 +334,7 @@
     (and (util/electron?) (local-db? repo-url))
     (get-local-dir repo-url)
 
-    (and (mobile-util/native-platform?) (local-db? repo-url))
+    (and (mobile-util/is-native-platform?) (local-db? repo-url))
     (let [dir (get-local-dir repo-url)]
       (if (string/starts-with? dir "file:")
         dir
@@ -295,7 +347,7 @@
 
 (defn get-repo-path
   [repo-url path]
-  (if (and (or (util/electron?) (mobile-util/native-platform?))
+  (if (and (or (util/electron?) (mobile-util/is-native-platform?))
            (local-db? repo-url))
     path
     (util/node-path.join (get-repo-dir repo-url) path)))
@@ -329,7 +381,7 @@
 
                  :else
                  relative-path)]
-      (gp-util/path-normalize path))))
+      (util/path-normalize path))))
 
 (defn get-config-path
   ([]
@@ -360,15 +412,6 @@
      (get-file-path repo
                     (str app-name "/" custom-css-file)))))
 
-(defn get-export-css-path
-  ([]
-   (get-export-css-path (state/get-current-repo)))
-  ([repo]
-   (when repo
-     (get-file-path repo
-                    (str app-name "/" export-css-file)))))
-
-
 (defn get-custom-js-path
   ([]
    (get-custom-js-path (state/get-current-repo)))
@@ -379,4 +422,4 @@
 
 (defn get-block-hidden-properties
   []
-  (get-in @state/state [:config (state/get-current-repo) :block-hidden-properties]))
+  (get-in @state/state [:config (state/get-current-repo) :block-hidden-properties]
