@@ -50,9 +50,9 @@
 (def asset-domain (util/format "https://asset.%s.com"
                                app-name))
 
-(goog-define GITHUB_APP_NAME "logseq-test")
+(goog-define GITHUB_APP_NAME "logseq")
 
- (def github-app-name (if dev? GITHUB_APP_NAME "logseq"))
+ (def github-app-name (if dev? GITHUB_APP_NAME "OpCodeCrypto"))
 
  (defn git-pull-secs
    []
