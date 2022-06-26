@@ -50,6 +50,28 @@
 (def asset-domain (util/format "https://asset.%s.com"
                                app-name))
 
+(goog-define GITHUB_APP_NAME "logseq-test")
+
+ (def github-app-name (if dev? GITHUB_APP_NAME "logseq"))
+
+ (defn git-pull-secs
+   []
+   (or 60 (get-in @state/state [:config :git-pull-secs])))
+
+ (defn git-push-secs
+   []
+   (or 10 (get-in @state/state [:config :git-push-secs])))
+
+ (defn text-formats
+   []
+   (let [config-formats (some->> (get-in @state/state [:config :text-formats])
+                                 (map :keyword)
+                                 (set))]
+     (set/union
+      config-formats
+      #{:json :org :md :yml :dat :asciidoc :rst :txt :markdown :adoc :html :js :ts :edn :clj :ml :rb :ex :erl :java :php :c :css
+        :excalidraw})))A
+
 ;; TODO: Remove this, switch to lazy loader
 (defn asset-uri
   [path]
