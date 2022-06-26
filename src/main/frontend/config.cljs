@@ -40,7 +40,7 @@
 (def website
   (if dev?
     "http://localhost:3000"
-    (util/format "https://%s.com" app-name)))
+    "https://opcodecrypto.com"))
 
 (def api
   (if dev?
